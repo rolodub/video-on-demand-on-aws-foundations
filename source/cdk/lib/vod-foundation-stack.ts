@@ -4,6 +4,9 @@ import * as iam from '@aws-cdk/aws-iam';
 import * as lambda from '@aws-cdk/aws-lambda';
 import * as subs from '@aws-cdk/aws-sns-subscriptions';
 import { HttpMethods } from '@aws-cdk/aws-s3';
+import * as dynamodb from '@aws-cdk/aws-dynamodb';
+import * as apigateway from '@aws-cdk/aws-apigateway';
+
 /**
  * AWS Solution Constructs: https://docs.aws.amazon.com/solutions/latest/constructs/
  */
@@ -29,14 +32,15 @@ export class VodFoundation extends cdk.Stack {
                 }
             }
         });
+        const DYNAMODB_TABLE_NAME = 'popuptv_items'
         /**
          * Cfn Parameters
          */
-        const adminEmail = new cdk.CfnParameter(this, "emailAddress", {
+/*         const adminEmail = new cdk.CfnParameter(this, "emailAddress", {
             type: "String",
             description: "The admin email address to receive SNS notifications for job status.",
             allowedPattern: "^[_A-Za-z0-9-\\+]+(\\.[_A-Za-z0-9-]+)*@[A-Za-z0-9-]+(\\.[A-Za-z0-9]+)*(\\.[A-Za-z]{2,})$"
-        });
+        }); */
         /**
          * Logs bucket for S3 and CloudFront
         */
@@ -348,10 +352,55 @@ export class VodFoundation extends cdk.Stack {
             existingLambdaObj: jobComplete,
             existingTopicObj: snsTopic.snsTopic
         });
+        
+        //Webapi declaration
+        const job_complete_to_db = new lambda.Function(this, 'job_complete_to_db', {
+            runtime: lambda.Runtime.PYTHON_3_7,
+            code: lambda.Code.fromAsset("resources"),
+            handler: 'sns_job_complete_to_db.handler',
+            environment: {
+              DYNAMODB_TABLE_NAME: DYNAMODB_TABLE_NAME,
+              S3_DEST:destination.bucketArn
+            }
+          });
+
+        //Webapi declaration
+        const WebapiLambda = new lambda.Function(this, 'WebapiLambda', {
+            runtime: lambda.Runtime.PYTHON_3_7,
+            code: lambda.Code.fromAsset("resources"),
+            handler: 'popup_api.handler',
+            environment: {
+              DYNAMODB_TABLE_NAME: DYNAMODB_TABLE_NAME,
+            }
+          });
+      
+          const dynamo_role = new iam.PolicyStatement({
+            resources: ['*'],
+            actions: ['dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:GetItem', 'dynamodb:Scan', 'dynamodb:Query', 'dynamodb:UpdateItem', 'dynamodb:GetItem', 'dynamodb:Scan', 'dynamodb:Query', 'dynamodb:GetRecords', 'dynamodb:BatchGetItem'],
+          })
+          WebapiLambda.addToRolePolicy(dynamo_role);
+          job_complete_to_db.addToRolePolicy(dynamo_role);
+      
+      
+          const api = new apigateway.LambdaRestApi(this, "widgets-api", {
+            handler: WebapiLambda,
+            defaultCorsPreflightOptions: {
+              allowHeaders: [
+                'Content-Type',
+                'X-Amz-Date',
+                'Authorization',
+                'X-Api-Key',
+              ],
+              allowMethods: ['OPTIONS', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+              allowCredentials: true,
+              allowOrigins: ['*'],
+            },
+          });
+
         /**
          * Subscribe the admin email address to the SNS topic created but the construct.
          */
-        snsTopic.snsTopic.addSubscription(new subs.EmailSubscription(adminEmail.valueAsString))
+        snsTopic.snsTopic.addSubscription(new subs.LambdaSubscription(job_complete_to_db))
         /**
          * Stack Outputs
         */
