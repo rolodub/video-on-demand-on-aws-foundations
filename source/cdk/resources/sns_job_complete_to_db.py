@@ -11,6 +11,7 @@ from pprint import pprint
 import time
 from pathlib import Path
 from decimal import Decimal
+import re
 
 def replace_floats(obj):
     if isinstance(obj, list):
@@ -50,9 +51,11 @@ def handler(event, context):
     if event['Records']:
         for record in event['Records']:
             message = json.loads(event['Records'][0]['Sns']['Message'])
+            print(message)
+            s3_radical = S3_DEST.replace('arn:aws:s3:::','s3://')
             item = {
                         "item_id": str(message['Id']),
-                        "item_type": 'stock_media', 
+                        "item_type": 'stock_media',
                         "item_name": Path(message['InputFile']).stem,
                         "item_category":"not set",
                         "urls":[{
@@ -60,12 +63,12 @@ def handler(event, context):
                                 "url_value":message['InputFile']
                             },
                             {
-                                "url_type":"media_hls",
+                                "url_type":"media_hls_cdn",
                                 "url_value":str(message['Outputs']['HLS_GROUP'][0])
                             },
                             {
-                                "url_type":"bucket_dest_arn",
-                                "url_value":S3_DEST
+                                "url_type":"media_hls_s3",
+                                "url_value":re.sub('.*cloudfront.net',s3_radical,message['Outputs']['HLS_GROUP'][0])
                             }],
                         "inputDetails":message['InputDetails'],
                         "item_creation_date": int(time.time()),
